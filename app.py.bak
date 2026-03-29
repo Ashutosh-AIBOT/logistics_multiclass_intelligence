@@ -1,0 +1,251 @@
+"""
+Project 09: Global Logistics Multi-Class Intelligence
+Streamlit Dashboard — Model Zoo, Predictions, Analytics
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import pickle
+import os
+from pathlib import Path
+
+# ── Config ──
+st.set_page_config(
+    page_title="Logistics Intelligence",
+    page_icon="🚢",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+MOD = "models"
+CH = "charts"
+CN = (
+    pickle.load(open(f"{MOD}/class_names.pkl", "rb"))
+    if os.path.exists(f"{MOD}/class_names.pkl")
+    else ["Advance shipping", "Late delivery", "Shipping canceled", "Shipping on time"]
+)
+
+# ── Custom CSS ──
+st.markdown(
+    """
+<style>
+    .main {background-color: #0e1117;}
+    .stMetric {background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 10px; padding: 15px; border: 1px solid #0f3460;}
+    .metric-label {color: #a0a0a0 !important; font-size: 0.85rem !important;}
+    .metric-value {color: #e94560 !important; font-size: 1.8rem !important; font-weight: bold !important;}
+    .stTabs [data-baseweb="tab-list"] {gap: 8px;}
+    .stTabs [data-baseweb="tab"] {background-color: #1a1a2e; border-radius: 8px 8px 0 0; padding: 10px 20px; border: 1px solid #0f3460;}
+    .stTabs [aria-selected="true"] {background-color: #0f3460 !important; color: #e94560 !important;}
+    .sidebar .sidebar-content {background: linear-gradient(180deg, #0e1117 0%, #1a1a2e 100%);}
+    h1, h2, h3 {color: #e94560 !important;}
+    .stDataFrame {border-radius: 10px; overflow: hidden;}
+    .stButton>button {background: linear-gradient(135deg, #e94560 0%, #0f3460 100%); color: white; border-radius: 8px; border: none; padding: 10px 24px; font-weight: bold;}
+    .stButton>button:hover {transform: translateY(-2px); box-shadow: 0 4px 15px rgba(233,69,96,0.4);}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ── Load Resources ──
+@st.cache_resource
+def load_all_models():
+    models = {}
+    zoo = f"{MOD}/model_zoo"
+    if os.path.exists(zoo):
+        for f in sorted(os.listdir(zoo)):
+            if f.endswith(".pkl"):
+                with open(f"{zoo}/{f}", "rb") as fh:
+                    models[f.replace(".pkl", "")] = pickle.load(fh)
+    return models
+
+
+@st.cache_data
+def load_results():
+    path = f"{MOD}/all_results.csv"
+    return pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+
+
+@st.cache_data
+def load_data():
+    proc = "data/processed"
+    if os.path.exists(f"{proc}/X_processed.csv"):
+        return pd.read_csv(f"{proc}/X_processed.csv"), pd.read_csv(
+            f"{proc}/y_target.csv"
+        ).iloc[:, 0]
+    return None, None
+
+
+models = load_all_models()
+results = load_results()
+X, y = load_data()
+
+# ── Sidebar ──
+with st.sidebar:
+    st.markdown("## 🚢 Navigation")
+    st.markdown("---")
+    page = st.radio(
+        "",
+        ["📊 Dashboard", "🔮 Predict", "📈 Compare", "📸 Charts"],
+        label_visibility="collapsed",
+    )
+    st.markdown("---")
+    st.markdown(f"**Models loaded:** {len(models)}")
+    st.markdown(f"**Classes:** {len(CN)}")
+    if X is not None:
+        st.markdown(f"**Dataset:** {X.shape[0]:,} × {X.shape[1]}")
+
+# ══════════════════════════════════════════════
+# PAGE: DASHBOARD
+# ══════════════════════════════════════════════
+if page == "📊 Dashboard":
+    st.markdown("# 🚢 Global Logistics Multi-Class Intelligence")
+    st.markdown(
+        "#### Predict shipping risks across 4 delivery categories using 14+ ML models"
+    )
+    st.markdown("---")
+
+    if not results.empty:
+        best = results.iloc[0]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🏆 Best Model", best["Model"], delta=None)
+        c2.metric("📊 F1 Score", f"{best['f1_macro']:.4f}")
+        c3.metric("🎯 Cohen's Kappa", f"{best['cohens_kappa']:.4f}")
+        c4.metric("⚡ MCC", f"{best['mcc']:.4f}")
+
+    st.markdown("### 📦 Classes")
+    cols = st.columns(len(CN))
+    icons = ["🚚", "⏰", "❌", "✅"]
+    for i, (col, name) in enumerate(zip(cols, CN)):
+        col.markdown(f"**{icons[i]} {name}**")
+
+    st.markdown("### 🏅 Leaderboard")
+    if not results.empty:
+        display_cols = [
+            "Model",
+            "accuracy",
+            "f1_macro",
+            "f1_weighted",
+            "cohens_kappa",
+            "mcc",
+            "roc_auc_macro",
+        ]
+        avail = [c for c in display_cols if c in results.columns]
+        st.dataframe(
+            results[avail].style.highlight_max(
+                subset=["f1_macro", "cohens_kappa", "mcc", "roc_auc_macro"],
+                color="#0f3460",
+            ),
+            use_container_width=True,
+            height=500,
+        )
+
+# ══════════════════════════════════════════════
+# PAGE: PREDICT
+# ══════════════════════════════════════════════
+elif page == "🔮 Predict":
+    st.markdown("# 🔮 Make a Prediction")
+    st.markdown("Select a model and input feature values to predict delivery status.")
+    st.markdown("---")
+
+    if X is not None and models:
+        col_left, col_right = st.columns([1, 2])
+
+        with col_left:
+            model_name = st.selectbox("🤖 Select Model", list(models.keys()), index=0)
+            model = models[model_name]
+            st.markdown(f"**Selected:** `{model_name}`")
+
+        with col_right:
+            st.markdown("### 📝 Input Features")
+            feature_names = X.columns.tolist()
+            inputs = {}
+            n_cols = 3
+            cols = st.columns(n_cols)
+            for i, feat in enumerate(feature_names):
+                with cols[i % n_cols]:
+                    val = float(X[feat].median())
+                    inputs[feat] = st.number_input(
+                        feat, value=val, format="%.4f", key=f"f_{feat}"
+                    )
+
+        st.markdown("---")
+        if st.button("🚀 Predict Delivery Status", use_container_width=True):
+            X_input = pd.DataFrame([inputs])
+            pred = model.predict(X_input)[0]
+            proba = (
+                model.predict_proba(X_input)[0]
+                if hasattr(model, "predict_proba")
+                else None
+            )
+
+            st.markdown("### 🎯 Result")
+            icons_pred = {
+                "Advance shipping": "🚚",
+                "Late delivery": "⏰",
+                "Shipping canceled": "❌",
+                "Shipping on time": "✅",
+            }
+            predicted_class = CN[pred]
+            st.success(
+                f"**{icons_pred.get(predicted_class, '📦')} Predicted: {predicted_class}**"
+            )
+
+            if proba is not None:
+                st.markdown("### 📊 Confidence")
+                proba_df = pd.DataFrame({"Class": CN, "Probability": proba})
+                st.bar_chart(proba_df.set_index("Class"))
+                for name, p in zip(CN, proba):
+                    st.progress(float(p), text=f"{name}: {p:.1%}")
+
+# ══════════════════════════════════════════════
+# PAGE: COMPARE
+# ══════════════════════════════════════════════
+elif page == "📈 Compare":
+    st.markdown("# 📈 Model Comparison")
+    st.markdown("---")
+
+    if not results.empty:
+        st.markdown("### F1 Score Ranking")
+        chart_data = results.set_index("Model")["f1_macro"].sort_values()
+        st.bar_chart(chart_data)
+
+        st.markdown("### Cohen's Kappa Ranking")
+        chart_data2 = results.set_index("Model")["cohens_kappa"].sort_values()
+        st.bar_chart(chart_data2)
+
+        if "roc_auc_macro" in results.columns:
+            st.markdown("### ROC-AUC Ranking")
+            chart_data3 = results.set_index("Model")["roc_auc_macro"].sort_values()
+            st.bar_chart(chart_data3)
+
+        st.markdown("### Full Results Table")
+        st.dataframe(results, use_container_width=True)
+
+# ══════════════════════════════════════════════
+# PAGE: CHARTS
+# ══════════════════════════════════════════════
+elif page == "📸 Charts":
+    st.markdown("# 📸 All Charts & Visualizations")
+    st.markdown("---")
+
+    chart_dirs = ["eda", "model_comparison", "evaluation", "pca_tsne", "explainability"]
+    tabs = st.tabs([d.replace("_", " ").title() for d in chart_dirs])
+
+    for tab, subdir in zip(tabs, chart_dirs):
+        with tab:
+            path = f"{CH}/{subdir}"
+            if os.path.exists(path):
+                images = sorted([f for f in os.listdir(path) if f.endswith(".png")])
+                if images:
+                    for img in images:
+                        st.image(
+                            f"{path}/{img}",
+                            caption=img.replace("_", " ").replace(".png", "").title(),
+                            use_container_width=True,
+                        )
+                else:
+                    st.info(f"No charts in {subdir} yet. Run notebook 05/06 first.")
+            else:
+                st.warning(f"Directory {path} not found.")
